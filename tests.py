@@ -20,7 +20,7 @@ test1_error = distance.euclidean(itrs.cartesian.xyz._to_value(u.m),
 assert test1_error < 25, print("Failed Test 1: GCRS to ITRS transformation")
 print("GCRS to ITRS other error in meters: ", test1_error)
 
-# !------------ Test 2 - ITRS to LLA
+# !------------ Test 2a - ITRS to LLA
 from transformations import itrs2lla
 xyz1 = np.array(itrs.cartesian.xyz._to_value(u.m), dtype=np.float64)
 lla = EarthLocation.from_geocentric(x=xyz1[0]*u.m,y=xyz1[1]*u.m,z=xyz1[2]*u.m)
@@ -29,10 +29,22 @@ lon = lla.lon.to_value(u.rad)
 height = lla.height.to_value(u.m)
 lla = [lon,lat,height]
 test2_error = lla - np.asarray(itrs2lla(xyz1))
-assert np.max(test2_error) < 0.0000001, print("Failed Test 2: ITRS to LLA transformation")
+assert np.max(test2_error) < 0.0000001, print("Failed Test 2a: ITRS to LLA transformation")
 print("ITRS to LLA error in rads,rads,meters: ", test2_error)
 
-# !------------ Test 3 - ITRS-ITRS to AzElDist
+# !------------ Test 2b - ITRS to LLA
+from transformations import itrs2lla_py
+xyz1 = np.array(itrs.cartesian.xyz._to_value(u.m), dtype=np.float64)
+lla = EarthLocation.from_geocentric(x=xyz1[0]*u.m,y=xyz1[1]*u.m,z=xyz1[2]*u.m)
+lat = lla.lat.to_value(u.rad)
+lon = lla.lon.to_value(u.rad)
+height = lla.height.to_value(u.m)
+lla = [lon,lat,height]
+test2_error = lla - np.asarray(itrs2lla_py(xyz1))
+assert np.max(test2_error) < 0.0000001, print("Failed Test 2b: ITRS to LLA transformation")
+print("ITRS to LLA (python) error in rads,rads,meters: ", test2_error)
+
+# !------------ Test 3 - ITRS-ITRS to AzElSr
 from transformations import itrs2azel
 xyz1 = np.array([1285410, -4797210, 3994830], dtype=np.float64)
 xyz2 = np.array([1202990, -4824940, 3999870], dtype=np.float64)
@@ -45,13 +57,13 @@ results = target.transform_to(AltAz_frame)
 
 az1 = results.az.to_value(u.rad)
 alt1 = results.alt.to_value(u.rad)
-dist1 = results.distance.to_value(u.m)
+sr1 = results.distance.to_value(u.m)
 
-aer = itrs2azel(xyz1,xyz2)
+aer = itrs2azel(xyz1,np.reshape(xyz2,(1,3)))[0]
 
-test3_error = [az1-aer[0],alt1-aer[1],dist1-aer[2]]
+test3_error = [az1-aer[0],alt1-aer[1],sr1-aer[2]]
 
 assert np.absolute(az1 - aer[0]) < 0.001, print("Failed Test 3a: ITRS-ITRS to Az transformation")
 assert np.absolute(alt1 - aer[1]) < 0.001, print("Failed Test 3b: ITRS-ITRS to El transformation")
-assert np.absolute(dist1 - aer[2]) < 0.001, print("Failed Test 3c: ITRS-ITRS to Dist transformation")
-print("ITRS-ITRS to Az, El, Dist error in rads,rads,meters: ", test2_error)
+assert np.absolute(sr1 - aer[2]) < 0.001, print("Failed Test 3c: ITRS-ITRS to Srange transformation")
+print("ITRS-ITRS to Az, El, Srange error in rads,rads,meters: ", test2_error)
