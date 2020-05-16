@@ -3,8 +3,8 @@ import pandas as pd
 from erfa_constants import ERFA_DPI, ERFA_DAS2R as DAS2R, ERFA_DAYSEC as DAYSEC, ERFA_DMAS2R as DMAS2R
 from erfa_constants import ERFA_WGS84_f as f, ERFA_WGS84_a as a
 from astropy._erfa import c2t06a, cal2jd, gc2gd, dat
-from scipy.spatial import distance
 from collections.abc import Iterable
+from numba import njit
 
 DAS2R = np.float64(DAS2R,dtype="f64")
 DAYSEC = np.float64(DAYSEC,dtype="f64")
@@ -96,7 +96,37 @@ def gcrs2irts_matrix(eop,t):
     return matrix
 
 
+@njit
 def itrs2azel(observer,targets):
+    """
+    uses ERFA's geocentric to geodetic function and the WGS84 ellipsoid parameters
+    Input:
+        observer is assumed to be a numpy array of dimension [3], where 3 is the ITRS x,z,y cartesian coordinates in
+            meters of the observing site at which the az el measurements are being generated
+        targets is assumed to be a numpy array of dimension [n, 3], where 3 is the ITRS x,z,y cartesian coordinates in
+            meters of a sets of n coordinates which are the distant points for the observer point
+    Output:
+        aer is a numpy array of dimension [n, 3], where 3 is the azimuth (radians), elevation (radians), slant range
+            (meters) of the n target points from the perspective of the observer point
+    """
+    x = observer[0]
+    y = observer[1]
+    z = observer[2]
+    dx = targets[:,0] - x
+    dy = targets[:,1] - y
+    dz = targets[:,2] - z
+    cos_azimuth = (-z*x*dx - z*y*dy + (x**2+y**2)*dz) / np.sqrt((x**2+y**2)*(x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
+    sin_azimuth = (-y*dx + x*dy) / np.sqrt((x**2+y**2)*(dx**2+dy**2+dz**2))
+    az = np.arctan2(sin_azimuth, cos_azimuth)
+    cos_elevation = (x*dx + y*dy + z*dz) / np.sqrt((x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
+    el = np.pi / 2 - np.arccos(cos_elevation)
+    sr = np.sqrt(np.sum(np.power((observer-targets),2).T,axis=0)) # slant range
+    az = az + (az<0)*np.pi*2
+    aer = np.column_stack((az, el, sr))
+    return aer
+
+
+def _itrs2azel(observer,targets):
     """
     uses ERFA's geocentric to geodetic function and the WGS84 ellipsoid parameters
     Input:
@@ -117,12 +147,13 @@ def itrs2azel(observer,targets):
     dz = targets_t[2] - z
     cos_azimuth = (-z*x*dx - z*y*dy + (x**2+y**2)*dz) / np.sqrt((x**2+y**2)*(x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
     sin_azimuth = (-y*dx + x*dy) / np.sqrt((x**2+y**2)*(dx**2+dy**2+dz**2))
-    az = np.arctan2(sin_azimuth, cos_azimuth)
+    az = np.asarray(np.arctan2(sin_azimuth, cos_azimuth))
     cos_elevation = (x*dx + y*dy + z*dz) / np.sqrt((x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
     el = np.pi / 2 - np.arccos(cos_elevation)
     sr = np.sqrt(np.sum(np.power((observer-targets),2).T,axis=0)) # slant range
-    for i in range(az.size):
-        if az.size > 1:
+    n = int(az.size)
+    for i in range(n):
+        if n > 1:
             if az[i] < 0:
                 az[i] = az[i] + np.pi*2
         else:
@@ -132,6 +163,7 @@ def itrs2azel(observer,targets):
     return aer
 
 
+@njit
 def itrs2lla_py(xyz):
     '''
     # The below code was modified from tis original ERFA c source files to run natively in python
