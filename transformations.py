@@ -97,15 +97,18 @@ def gcrs2irts_matrix(eop,t):
 @njit
 def itrs2azel(observer,targets):
     """
-    uses ERFA's geocentric to geodetic function and the WGS84 ellipsoid parameters
+    Purpose:
+        Calculate the observed locations of a set of ITRS target coordinates with respect to an observer coordinate
     Input:
-        observer is assumed to be a numpy array of dimension [3], where 3 is the ITRS x,z,y cartesian coordinates in
+        'observer' is assumed to be a numpy array of dimension [3], where 3 is the ITRS x,z,y cartesian coordinates in
             meters of the observing site at which the az el measurements are being generated
-        targets is assumed to be a numpy array of dimension [n, 3], where 3 is the ITRS x,z,y cartesian coordinates in
+        'targets' is assumed to be a numpy array of dimension [n, 3], where 3 is the ITRS x,z,y cartesian coordinates in
             meters of a sets of n coordinates which are the distant points for the observer point
     Output:
-        aer is a numpy array of dimension [n, 3], where 3 is the azimuth (radians), elevation (radians), slant range
+        'aer' is a numpy array of dimension [n, 3], where 3 is the azimuth (radians), elevation (radians), slant range
             (meters) of the n target points from the perspective of the observer point
+    Source:
+        https://gis.stackexchange.com/questions/58923/calculating-view-angle
     """
     x = observer[0]
     y = observer[1]
@@ -126,7 +129,8 @@ def itrs2azel(observer,targets):
 
 def _itrs2azel(observer,targets):
     """
-    uses ERFA's geocentric to geodetic function and the WGS84 ellipsoid parameters
+    Purpose:
+        Calculate the observed location(s) of a set of ITRS target coordinate(s) with respect to an observer coordinate
     Input:
         observer is assumed to be a numpy array of dimension [3], where 3 is the ITRS x,z,y cartesian coordinates in
             meters of the observing site at which the az el measurements are being generated
