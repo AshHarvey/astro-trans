@@ -1,14 +1,12 @@
 import numpy as np
 import pandas as pd
-from erfa_constants import ERFA_DPI, ERFA_DAS2R as DAS2R, ERFA_DAYSEC as DAYSEC, ERFA_DMAS2R as DMAS2R
-from erfa_constants import ERFA_WGS84_f as f, ERFA_WGS84_a as a
 from astropy._erfa import c2t06a, cal2jd, gc2gd, dat
 from collections.abc import Iterable
 from numba import njit
 
-DAS2R = np.float64(DAS2R,dtype="f64")
-DAYSEC = np.float64(DAYSEC,dtype="f64")
-DMAS2R = np.float64(DMAS2R,dtype="f64")
+from astropy._erfa import DAYSEC, DAS2R, DMAS2R, DPI, eform
+
+a, f = eform(1)
 
 
 def get_eops():
@@ -16,12 +14,12 @@ def get_eops():
    This function downloads the Earth Orientation Parameters (EOPs) from the IAU sources and returns them as a pandas
         dataframe
     """
-    ds = np.DataSource('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
-    f = ds.open('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
-    arr = np.genfromtxt(f, skip_header=14)
+    datasource = np.DataSource('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
+    file = datasource.open('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
+    array = np.genfromtxt(file, skip_header=14)
     headers = ['Year','Month','Day','MJD','x','y','UT1-UTC','LOD','dX',
                'dY','x Err','y Err','UT1-UTC Err','LOD Err','dX Err','dY Err']
-    eop = pd.DataFrame(data=arr, index=arr[:,3], columns=headers)
+    eop = pd.DataFrame(data=array, index=array[:,3], columns=headers)
     return eop
 
 
@@ -285,7 +283,7 @@ def itrs2lla_py(xyz):
         height = (p * cc + absz * s1 - a * np.sqrt(ec2 * s12 + cc2)) / np.sqrt(s12 + cc2)
     else:
         # Exception: pole. */
-        phi = ERFA_DPI / 2.0
+        phi = DPI / 2.0
         height = absz - b
 
     # Restore sign of latitude. */
@@ -371,4 +369,3 @@ def itrs2lla(xyz):
     lla = np.array(gc2gd(1,xyz),dtype=np.float64)
     lla = lla.T
     return lla
-
