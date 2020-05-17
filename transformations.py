@@ -168,7 +168,7 @@ def _itrs2azel(observer,targets):
 @njit
 def itrs2lla_py(xyz):
     '''
-    # The below code was modified from tis original ERFA c source files to run natively in python
+    # The below code was modified from its original ERFA c source files to run natively in python
     # Refer to the ERFA documentation below
     #  - - - - - - - - - -
     #   e r a G c 2 g d e
