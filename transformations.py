@@ -1,21 +1,22 @@
 import numpy as np
 import pandas as pd
-from astropy._erfa import c2t06a, cal2jd, gc2gd, dat
+from astropy._erfa import c2t06a, cal2jd, gc2gd, dat, gd2gc, xys06a, c2ixys, era00, cr, rz, rxr, pom00, sp00
 from collections.abc import Iterable
 from numba import njit
 
 from astropy._erfa import DAYSEC, DAS2R, DMAS2R, DPI, eform
 
-a, f = eform(1)
+a, f = eform(1) # WGS84 ellipsoid parameters
 
 
 def get_eops():
     """
    This function downloads the Earth Orientation Parameters (EOPs) from the IAU sources and returns them as a pandas
-        dataframe
+        dataframe; https://datacenter.iers.org/eop.php
     """
-    datasource = np.DataSource('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
-    file = datasource.open('ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now')
+    url = 'ftp://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now'
+    datasource = np.DataSource(url)
+    file = datasource.open(url)
     array = np.genfromtxt(file, skip_header=14)
     headers = ['Year','Month','Day','MJD','x','y','UT1-UTC','LOD','dX',
                'dY','x Err','y Err','UT1-UTC Err','LOD Err','dX Err','dY Err']
@@ -23,7 +24,21 @@ def get_eops():
     return eop
 
 
-def gcrs2irts_matrix(eop,t):
+def get_eops2(year_fraction):
+    """
+   This function downloads the Earth Orientation Parameters (EOPs) from the IAU sources and returns them as a pandas
+        dataframe; https://datacenter.iers.org/eop.php
+    # in draft form, will be used to make an array version of dataframe based get_eops()
+    """
+    url = 'ftp://ftp.iers.org/products/eop/long-term/c01/eopc01.iau2000.1900-now.dat'
+    datasource = np.DataSource(url).open()
+    file = datasource.open()
+    array = np.genfromtxt(file, skip_header=1)
+    np.searchsorted(array[:1000,0], year_fraction, side="left")
+    return eop
+
+
+def gcrs2irts_matrix_a(t, eop):
     """
     Purpose:
         This function calculates the cartesian transformation matrix for transforming GCRS to ITRS or vice versa
@@ -39,56 +54,152 @@ def gcrs2irts_matrix(eop,t):
         t = [t]
     matrix = []
     for tt in t:
-        year = tt.year
-        month = tt.month
-        day = tt.day
-        hour = tt.hour
-        minute = tt.minute
-        second = tt.second
+        jd, ttb, utb, xp, dx06, yp, dy06 = utc2cel06a_parameters(tt, eop)
 
-        # TT (MJD). */
-        djmjd0, date = cal2jd(iy=year, im=month, id=day)
-        jd = djmjd0 + date
-        time = (60.0*(60*hour + minute) + second ) / DAYSEC
-        Dat = dat( year, month, day, time)
-        ttb = Dat/DAYSEC + 32.184/DAYSEC
+        # celestial to terrestrial transformation matrix
+        c2t06a_mat = c2t06a(tta=jd, ttb=ttb, uta=jd, utb=utb, xp=xp, yp=yp)
 
+        matrix.append(c2t06a_mat)
+    if len(matrix) == 1:
+        matrix = matrix[0]
+    return matrix
+
+
+def utc2cel06a_parameters(t, eop, iau55=False):
+    """
+    Purpose:
+        This function calculates the cartesian transformation matrix for transforming GCRS to ITRS or vice versa
+    Inputs:
+        eop is a dataframe containing the Earth Orientation Parameters as per IAU definitions
+        t is a datetime object or a list of datetime objects with the UTC times for the transformation matrix to be
+            calculated for
+    Outputs:
+        jd is the julian date (always xxx.5 because it is based on a noon day break) in days
+        ttb is the leap second offset in fractions of a day
+        utb is the UT1 offset in fractions of a day
+        xp and yp are the coordinates (in radians) of the Celestial Intermediate Pole with respect to the International
+            Terrestrial Reference System (see IERS Conventions 2003), measured along the meridians to 0 and 90 deg west
+            respectively (as extrapolated from between the two published points before and after).
+        dx06 and dy06 are the CIP offsets wrt IAU 2006/2000A (mas->radians) as extrapolated from between the two
+            published points before and after
+    """
+    year = t.year
+    month = t.month
+    day = t.day
+    hour = t.hour
+    minute = t.minute
+    second = t.second
+
+    # TT (MJD). */
+    djmjd0, date = cal2jd(iy=year, im=month, id=day)
+    jd = djmjd0 + date
+    day_frac = (60.0*(60*hour + minute) + second ) / DAYSEC
+    dat_s = dat( year, month, day, day_frac)
+    ttb = dat_s/DAYSEC + 32.184/DAYSEC
+
+    # Polar motion (arcsec->radians)
+    xp_l = eop["x"][date]
+    yp_l = eop["y"][date]
+    xp_h = eop["x"][date+1]
+    yp_h = eop["y"][date+1]
+    xp = (xp_l*(1-day_frac) + xp_h*day_frac ) * DAS2R
+    yp = (yp_l*(1-day_frac) + yp_h*day_frac ) * DAS2R
+
+    # UT1-UTC (s). */
+    dut_l = eop["UT1-UTC"][date]
+    dut_h = eop["UT1-UTC"][date+1]
+    dut1 = (dut_l*(1-day_frac) + dut_h*day_frac )
+
+    # CIP offsets wrt IAU 2006/2000A (mas->radians). */
+    dx_l = eop["dX"][date]
+    dx_h = eop["dX"][date+1]
+    dy_l = eop["dY"][date]
+    dy_h = eop["dY"][date+1]
+    dx06 = (dx_l*(1-day_frac) + dx_h*day_frac ) * DAS2R
+    dy06 = (dy_l*(1-day_frac) + dy_h*day_frac ) * DAS2R
+
+    if iau55:
+        # CIP offsets wrt IAU 2006/2000A (mas->radians). */
+        dx06 = np.float64(0.1750 * DMAS2R,dtype="f64")
+        dy06 = np.float64(-0.2259 * DMAS2R,dtype="f64")
+        # UT1-UTC (s). */
+        dut1 = np.float64(-0.072073685,dtype="f64")
         # Polar motion (arcsec->radians)
         xp = np.float64(0.0349282 * DAS2R,dtype="f64")
         yp = np.float64(0.4833163 * DAS2R,dtype="f64")
 
-        xp_l = eop["x"][date]
-        yp_l = eop["x"][date]
-        xp_h = eop["y"][date+1]
-        yp_h = eop["y"][date+1]
-        xp = (xp_l*(1-time) + xp_h*time ) * DAS2R
-        yp = (yp_l*(1-time) + yp_h*time ) * DAS2R
+    # UT1. */
+    utb = day_frac + dut1/DAYSEC
 
-        # UT1-UTC (s). */
-        dut1 = np.float64(-0.072073685 * DAS2R,dtype="f64")
+    return jd, ttb, utb, xp, dx06, yp, dy06
 
-        dut_l = eop["UT1-UTC"][date]
-        dut_h = eop["UT1-UTC"][date+1]
-        dut = (dut_l*(1-time) + dut_h*time ) * DAS2R
 
-        # CIP offsets wrt IAU 2006/2000A (mas->radians). */
-        dx06 = np.float64(0.1750 * DMAS2R,dtype="f64")
-        dy06 = np.float64(-0.2259 * DMAS2R,dtype="f64")
+def gcrs2irts_matrix_b(t, eop):
+    """
+    Purpose:
+        This function calculates the cartesian transformation matrix for transforming GCRS to ITRS or vice versa
+    Inputs:
+        eop is a dataframe containing the Earth Orientation Parameters as per IAU definitions
+        t is a datetime object or a list of datetime objects with the UTC times for the transformation matrix to be
+            calculated for
+    Outputs:
+        matrix is a [3,3] numpy array or list of arrays used for transforming GCRS to ITRS or vice versa at the
+            specified times; ITRS = matrix @ GCRS
+    """
+    if not(isinstance(t, Iterable)):
+        t = [t]
+    matrix = []
+    for ti in t:
+        year = ti.year
+        month = ti.month
+        day = ti.day
+        hour = ti.hour
+        minute = ti.minute
+        second = ti.second
 
-        dx_l = eop["dX"][date]
-        dx_h = eop["dX"][date+1]
-        dy_l = eop["dY"][date]
-        dy_h = eop["dY"][date+1]
-        dx06 = (dx_l*(1-time) + dx_h*time ) * DAS2R
-        dy06 = (dy_l*(1-time) + dy_h*time ) * DAS2R
+        # TT (MJD). */
+        djmjd0, date = cal2jd(iy=year, im=month, id=day)
+        # jd = djmjd0 + date
+        day_frac = (60.0*(60*hour + minute) + second ) / DAYSEC
+        utc = date + day_frac
+        Dat = dat( year, month, day, day_frac)
+        tai = utc + Dat/DAYSEC
+        tt = tai + 32.184/DAYSEC
 
         # UT1. */
-        utb = time + dut1/DAYSEC
+        dut1 = eop["UT1-UTC"][date]*(1-day_frac) + eop["UT1-UTC"][date+1]*day_frac
+        tut = day_frac + dut1/DAYSEC
+        # ut1 = date + tut
 
-        # celestial to terrestrial transformation matrix
-        c2t06a_mat = c2t06a(tta=jd,ttb=ttb,uta=jd,utb=utb,xp=xp+dx06,yp=yp+dy06)
+        # CIP and CIO, IAU 2006/2000A. */
+        x, y, s = xys06a(djmjd0, tt)
 
-        matrix.append(c2t06a_mat)
+        # X, Y offsets
+        dx06 = (eop["dX"][date]*(1-day_frac) + eop["dX"][date+1]*day_frac)*DAS2R
+        dy06 = (eop["dY"][date]*(1-day_frac) + eop["dY"][date+1]*day_frac)*DAS2R
+
+        # Add CIP corrections. */
+        x = x + dx06
+        y = y + dy06
+
+        # GCRS to CIRS matrix. */
+        rc2i = c2ixys(x, y, s)
+
+        # Earth rotation angle. */
+        era = era00(djmjd0+date, tut)
+
+        # Form celestial-terrestrial matrix (no polar motion yet). */
+        rc2ti = cr(rc2i)
+        rc2ti = rz(era, rc2ti)
+
+        # Polar motion matrix (TIRS->ITRS, IERS 2003). */
+        xp = (eop["x"][date]*(1-day_frac) + eop["x"][date+1]*day_frac) * DAS2R
+        yp = (eop["y"][date]*(1-day_frac) + eop["y"][date+1]*day_frac) * DAS2R
+        rpom = pom00(xp, yp, sp00(djmjd0, tt))
+
+        # Form celestial-terrestrial matrix (including polar motion). */
+        rc2it = rxr(rpom, rc2ti)
+        matrix.append(rc2it)
     if len(matrix) == 1:
         matrix = matrix[0]
     return matrix
@@ -373,3 +484,20 @@ def itrs2lla(xyz):
     lla = np.array(gc2gd(1,xyz),dtype=np.float64)
     lla = lla.T
     return lla
+
+
+def lla2itrs(lla):
+    """
+    uses ERFA's geodetic to geocentric function and the WGS84 ellipsoid parameters
+    Input:
+        lla is assumed to be a numpy array of dimension [3] or [n,3], where 3 is the lon (radians),lat (radians),
+            height (meters) of the geodetic coordinates of n different sets of coordinates
+    Output:
+        xyz is assumed to be a numpy array of dimension [3] or [n,3], where 3 is the x,z,y cartesian coordinates in
+            meters of n different sets of coordinates
+    """
+    lla = np.atleast_2d(lla)
+    xyz = np.array(gd2gc(1,lla[:,0],lla[:,1],lla[:,2]),dtype=np.float64)
+    if xyz.size == 3:
+        xyz = xyz[0]
+    return xyz
