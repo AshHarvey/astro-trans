@@ -27,7 +27,7 @@ test1b_error = distance.euclidean(itrs.cartesian.xyz._to_value(u.m),
                                   gcrs2irts_matrix_b(t, eop) @ xyz1)
 assert test1a_error < 25, print("Failed Test 1: GCRS to ITRS transformation")
 print("Test 1a: GCRS to ITRS (a) error in meters: ", test1a_error)
-print("Test 1b: GCRS to ITRS (b) error in kilometers: ", test1b_error)
+print("Test 1b: GCRS to ITRS (b) error in meters: ", test1b_error)
 
 # !------------ Test 2a - ITRS to LLA
 from transformations import itrs2lla
@@ -54,7 +54,7 @@ assert np.max(test2_error) < 0.0000001, print("Failed Test 2b: ITRS to LLA trans
 print("Test 2b: ITRS to LLA (python) error in rads,rads,meters: ", test2_error)
 
 # !------------ Test 3 - ITRS-ITRS to AzElSr
-from transformations import itrs2azel
+from transformations import itrs2azel, _itrs2azel
 xyz1 = np.array([1285410, -4797210, 3994830], dtype=np.float64)
 xyz2 = np.array([1202990, -4824940, 3999870], dtype=np.float64)
 
@@ -68,10 +68,13 @@ az1 = results.az.to_value(u.rad)
 alt1 = results.alt.to_value(u.rad)
 sr1 = results.distance.to_value(u.m)
 
-aer = itrs2azel(xyz1,np.reshape(xyz2,(1,3)))[0]
+
+aer = _itrs2azel(xyz1,xyz2)
+aer2 = itrs2azel(xyz1,np.reshape(xyz2,(1,3)))[0]
 
 test3_error = [az1-aer[0],alt1-aer[1],sr1-aer[2]]
 
+assert np.allclose(aer,aer2), print("Failed Test 3a: _itrs2azel and itrs2azel do not match")
 assert np.absolute(az1 - aer[0]) < 0.001, print("Failed Test 3a: ITRS-ITRS to Az transformation")
 assert np.absolute(alt1 - aer[1]) < 0.001, print("Failed Test 3b: ITRS-ITRS to El transformation")
 assert np.absolute(sr1 - aer[2]) < 0.001, print("Failed Test 3c: ITRS-ITRS to Srange transformation")
@@ -86,14 +89,16 @@ for i in range(2880):
     t.append(t[-1]+timedelta(seconds=30))
 gcrs2irts_matrix_a(t, eop)
 end = time.time()
-print("Test 4a: Time to generate cel2ter transformation matrix with gcrs2irts_matrix_a for every 30 seconds for an entire day: ", end-start, " seconds")
+print("Test 4a: Time to generate cel2ter transformation matrix with gcrs2irts_matrix_a for every 30 seconds for an "
+      "entire day: ", end-start, " seconds")
 
 start = time.time()
 for i in range(2880):
     t.append(t[-1]+timedelta(seconds=30))
 gcrs2irts_matrix_b(t, eop)
 end = time.time()
-print("Test 4b: Time to generate cel2ter transformation matrix with gcrs2irts_matrix_b for every 30 seconds for an entire day: ", end-start, " seconds")
+print("Test 4b: Time to generate cel2ter transformation matrix with gcrs2irts_matrix_b for every 30 seconds for an "
+      "entire day: ", end-start, " seconds")
 
 # !------------ Test 5 - ITRS to GCRS SOFA cases
 from transformations import gcrs2irts_matrix_a, gcrs2irts_matrix_b
@@ -128,7 +133,8 @@ print("Test 5e: Cel2Ter06aXY vs gcrs2irts_matrix, magnitude of error: ", det(Cel
 print("Test 5f: Cel2Ter06aXY vs utc2cel06acio, magnitude of error: ", det(Cel2Ter06aXY - gcrs2irts_matrix_b(t, eop)))
 
 # !------------ Test 6 - Az El end to end
-from envs.transformations import lla2itrs, _itrs2azel
+from transformations import lla2itrs, _itrs2azel
+from numba import njit
 
 observer_lat = np.radians(38.828198)
 observer_lon = np.radians(-77.305352)
@@ -143,6 +149,7 @@ def hx(x_gcrs, trans_matrix, obs=observer_itrs):
     x_itrs = trans_matrix @ x_gcrs[:3]
     aer = _itrs2azel(observer_itrs, x_itrs)
     return aer
+
 
 def hx2(x, t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_alt):
     # measurement function - convert state into a measurement
@@ -159,20 +166,44 @@ def hx2(x, t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_al
     aer = np.array([az, alt, sr])
     return aer
 
+
+gcrs_xyz = [[-400000.0,-400000.0,-400000.0],
+            [-400000.0,-400000.0,400000.0],
+            [-400000.0,400000.0,-400000.0],
+            [-400000.0,400000.0,400000.0],
+            [400000.0,-400000.0,400000.0],
+            [400000.0,400000.0,-400000.0],
+            [400000.0,-400000.0,-400000.0],
+            [400000.0,400000.0,400000.0]]
+
+
 t=datetime(year = 2007, month = 4, day = 5, hour = 12, minute = 0, second = 0)
 
-trans_matrix = gcrs2irts_matrix_a(t, eop)
+trans_matrix = gcrs2irts_matrix_b(t, eop)
 
-ini = _itrs2azel(observer_itrs, x[:3]) # since _itrs2azel is used inside hx, it must be compiled prior to hx
+z1 = []
+z2 = []
+for xyz in gcrs_xyz:
+    z1.append(hx(np.asarray(xyz), trans_matrix, obs=observer_itrs))
+    z2.append(hx2(np.asarray(xyz), t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_alt))
 
-z1 = hx(x, trans_matrix, obs=observer_itrs)
+for z in z1:
+    if z[0] < 0:
+        z[0] += np.pi*2
 
-z2 = hx2(x, t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_alt)
+hx_error = []
+for i in range(len(z1)):
+    hx_error.append(z2[i] - z1[i])
 
-hx_error = z2 - z1
+hx_error = np.asarray(hx_error)
 
-print("Test 6a: hx error in azimuth (arc seconds) = ", np.degrees(hx_error[0])*60*60)
-print("Test 6b: hx error in elevation (arc seconds) = ", np.degrees(hx_error[1])*60*60)
-print("Test 6c: hx error in slant range (meters) = ", np.degrees(hx_error[2])*1000)
-print("I am unsure if these errors are mine or AstroPy's given the above matched. Each sub-function checks out against AstroPy, but the end to end case has significantly more error...")
+error_az = np.degrees(hx_error[:,0])*60*60
+error_el = np.degrees(hx_error[:,1])*60*60
+error_sr = np.degrees(hx_error[:,2])*1000
+
+print("Test 6a: hx error in azimuth (arc seconds) = ", np.mean(np.abs(error_az)), " (mean); individual errors: ", error_az)
+print("Test 6b: hx error in elevation (arc seconds) = ", np.mean(np.abs(error_el)), " (mean); individual errors: ", error_el)
+print("Test 6c: hx error in slant range (meters) = ", np.mean(np.abs(error_sr)), " (mean); individual errors: ", error_sr)
+print("I am unsure if these errors are mine or AstroPy's given the above matched. Each sub-function checks out against "
+      "AstroPy, but the end to end case has significantly more error...")
 print("Done")
