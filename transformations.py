@@ -251,6 +251,7 @@ def _itrs2azel(observer, target):
     cos_elevation = (x * dx + y * dy + z * dz) / np.sqrt((x ** 2 + y ** 2 + z ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
     el = np.pi / 2 - np.arccos(cos_elevation)
     sr = np.sqrt(np.sum(np.power((observer - target), 2).T, axis=0))  # slant range
+    az = az + (az < 0) * np.pi * 2
     aer = np.array([az, el, sr])
     return aer
 
