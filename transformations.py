@@ -1,12 +1,12 @@
+from collections.abc import Iterable
+
 import numpy as np
 import pandas as pd
+from astropy._erfa import DAYSEC, DAS2R, DMAS2R, DPI, eform
 from astropy._erfa import c2t06a, cal2jd, gc2gd, dat, gd2gc, xys06a, c2ixys, era00, cr, rz, rxr, pom00, sp00
-from collections.abc import Iterable
 from numba import njit
 
-from astropy._erfa import DAYSEC, DAS2R, DMAS2R, DPI, eform
-
-a, f = eform(1) # WGS84 ellipsoid parameters
+a, f = eform(1)  # WGS84 ellipsoid parameters
 
 
 def get_eops():
@@ -18,25 +18,10 @@ def get_eops():
     datasource = np.DataSource(url)
     file = datasource.open(url)
     array = np.genfromtxt(file, skip_header=14)
-    headers = ['Year','Month','Day','MJD','x','y','UT1-UTC','LOD','dX',
-               'dY','x Err','y Err','UT1-UTC Err','LOD Err','dX Err','dY Err']
-    eop = pd.DataFrame(data=array, index=array[:,3], columns=headers)
+    headers = ['Year', 'Month', 'Day', 'MJD', 'x', 'y', 'UT1-UTC', 'LOD', 'dX',
+               'dY', 'x Err', 'y Err', 'UT1-UTC Err', 'LOD Err', 'dX Err', 'dY Err']
+    eop = pd.DataFrame(data=array, index=array[:, 3], columns=headers)
     return eop
-
-
-def get_eops2(year_fraction):
-    """
-   This function downloads the Earth Orientation Parameters (EOPs) from the IAU sources and returns them as a pandas
-        dataframe; https://datacenter.iers.org/eop.php
-    # in draft form, will be used to make an array version of dataframe based get_eops()
-    """
-    url = 'ftp://ftp.iers.org/products/eop/long-term/c01/eopc01.iau2000.1900-now.dat'
-    datasource = np.DataSource(url).open()
-    file = datasource.open()
-    array = np.genfromtxt(file, skip_header=1)
-    np.searchsorted(array[:1000,0], year_fraction, side="left")
-    return eop
-
 
 def gcrs2irts_matrix_a(t, eop):
     """
@@ -50,7 +35,7 @@ def gcrs2irts_matrix_a(t, eop):
         matrix is a [3,3] numpy array or list of arrays used for transforming GCRS to ITRS or vice versa at the
             specified times; ITRS = matrix @ GCRS
     """
-    if not(isinstance(t, Iterable)):
+    if not (isinstance(t, Iterable)):
         t = [t]
     matrix = []
     for tt in t:
@@ -93,43 +78,43 @@ def utc2cel06a_parameters(t, eop, iau55=False):
     # TT (MJD). */
     djmjd0, date = cal2jd(iy=year, im=month, id=day)
     jd = djmjd0 + date
-    day_frac = (60.0*(60*hour + minute) + second ) / DAYSEC
-    dat_s = dat( year, month, day, day_frac)
-    ttb = dat_s/DAYSEC + 32.184/DAYSEC
+    day_frac = (60.0 * (60 * hour + minute) + second) / DAYSEC
+    dat_s = dat(year, month, day, day_frac)
+    ttb = dat_s / DAYSEC + 32.184 / DAYSEC
 
     # Polar motion (arcsec->radians)
     xp_l = eop["x"][date]
     yp_l = eop["y"][date]
-    xp_h = eop["x"][date+1]
-    yp_h = eop["y"][date+1]
-    xp = (xp_l*(1-day_frac) + xp_h*day_frac ) * DAS2R
-    yp = (yp_l*(1-day_frac) + yp_h*day_frac ) * DAS2R
+    xp_h = eop["x"][date + 1]
+    yp_h = eop["y"][date + 1]
+    xp = (xp_l * (1 - day_frac) + xp_h * day_frac) * DAS2R
+    yp = (yp_l * (1 - day_frac) + yp_h * day_frac) * DAS2R
 
     # UT1-UTC (s). */
     dut_l = eop["UT1-UTC"][date]
-    dut_h = eop["UT1-UTC"][date+1]
-    dut1 = (dut_l*(1-day_frac) + dut_h*day_frac )
+    dut_h = eop["UT1-UTC"][date + 1]
+    dut1 = (dut_l * (1 - day_frac) + dut_h * day_frac)
 
     # CIP offsets wrt IAU 2006/2000A (mas->radians). */
     dx_l = eop["dX"][date]
-    dx_h = eop["dX"][date+1]
+    dx_h = eop["dX"][date + 1]
     dy_l = eop["dY"][date]
-    dy_h = eop["dY"][date+1]
-    dx06 = (dx_l*(1-day_frac) + dx_h*day_frac ) * DAS2R
-    dy06 = (dy_l*(1-day_frac) + dy_h*day_frac ) * DAS2R
+    dy_h = eop["dY"][date + 1]
+    dx06 = (dx_l * (1 - day_frac) + dx_h * day_frac) * DAS2R
+    dy06 = (dy_l * (1 - day_frac) + dy_h * day_frac) * DAS2R
 
     if iau55:
         # CIP offsets wrt IAU 2006/2000A (mas->radians). */
-        dx06 = np.float64(0.1750 * DMAS2R,dtype="f64")
-        dy06 = np.float64(-0.2259 * DMAS2R,dtype="f64")
+        dx06 = np.float64(0.1750 * DMAS2R, dtype="f64")
+        dy06 = np.float64(-0.2259 * DMAS2R, dtype="f64")
         # UT1-UTC (s). */
-        dut1 = np.float64(-0.072073685,dtype="f64")
+        dut1 = np.float64(-0.072073685, dtype="f64")
         # Polar motion (arcsec->radians)
-        xp = np.float64(0.0349282 * DAS2R,dtype="f64")
-        yp = np.float64(0.4833163 * DAS2R,dtype="f64")
+        xp = np.float64(0.0349282 * DAS2R, dtype="f64")
+        yp = np.float64(0.4833163 * DAS2R, dtype="f64")
 
     # UT1. */
-    utb = day_frac + dut1/DAYSEC
+    utb = day_frac + dut1 / DAYSEC
 
     return jd, ttb, utb, xp, dx06, yp, dy06
 
@@ -146,7 +131,7 @@ def gcrs2irts_matrix_b(t, eop):
         matrix is a [3,3] numpy array or list of arrays used for transforming GCRS to ITRS or vice versa at the
             specified times; ITRS = matrix @ GCRS
     """
-    if not(isinstance(t, Iterable)):
+    if not (isinstance(t, Iterable)):
         t = [t]
     matrix = []
     for ti in t:
@@ -160,23 +145,23 @@ def gcrs2irts_matrix_b(t, eop):
         # TT (MJD). */
         djmjd0, date = cal2jd(iy=year, im=month, id=day)
         # jd = djmjd0 + date
-        day_frac = (60.0*(60*hour + minute) + second ) / DAYSEC
+        day_frac = (60.0 * (60 * hour + minute) + second) / DAYSEC
         utc = date + day_frac
-        Dat = dat( year, month, day, day_frac)
-        tai = utc + Dat/DAYSEC
-        tt = tai + 32.184/DAYSEC
+        Dat = dat(year, month, day, day_frac)
+        tai = utc + Dat / DAYSEC
+        tt = tai + 32.184 / DAYSEC
 
         # UT1. */
-        dut1 = eop["UT1-UTC"][date]*(1-day_frac) + eop["UT1-UTC"][date+1]*day_frac
-        tut = day_frac + dut1/DAYSEC
+        dut1 = eop["UT1-UTC"][date] * (1 - day_frac) + eop["UT1-UTC"][date + 1] * day_frac
+        tut = day_frac + dut1 / DAYSEC
         # ut1 = date + tut
 
         # CIP and CIO, IAU 2006/2000A. */
         x, y, s = xys06a(djmjd0, tt)
 
         # X, Y offsets
-        dx06 = (eop["dX"][date]*(1-day_frac) + eop["dX"][date+1]*day_frac)*DAS2R
-        dy06 = (eop["dY"][date]*(1-day_frac) + eop["dY"][date+1]*day_frac)*DAS2R
+        dx06 = (eop["dX"][date] * (1 - day_frac) + eop["dX"][date + 1] * day_frac) * DAS2R
+        dy06 = (eop["dY"][date] * (1 - day_frac) + eop["dY"][date + 1] * day_frac) * DAS2R
 
         # Add CIP corrections. */
         x = x + dx06
@@ -186,15 +171,15 @@ def gcrs2irts_matrix_b(t, eop):
         rc2i = c2ixys(x, y, s)
 
         # Earth rotation angle. */
-        era = era00(djmjd0+date, tut)
+        era = era00(djmjd0 + date, tut)
 
         # Form celestial-terrestrial matrix (no polar motion yet). */
         rc2ti = cr(rc2i)
         rc2ti = rz(era, rc2ti)
 
         # Polar motion matrix (TIRS->ITRS, IERS 2003). */
-        xp = (eop["x"][date]*(1-day_frac) + eop["x"][date+1]*day_frac) * DAS2R
-        yp = (eop["y"][date]*(1-day_frac) + eop["y"][date+1]*day_frac) * DAS2R
+        xp = (eop["x"][date] * (1 - day_frac) + eop["x"][date + 1] * day_frac) * DAS2R
+        yp = (eop["y"][date] * (1 - day_frac) + eop["y"][date + 1] * day_frac) * DAS2R
         rpom = pom00(xp, yp, sp00(djmjd0, tt))
 
         # Form celestial-terrestrial matrix (including polar motion). */
@@ -206,7 +191,7 @@ def gcrs2irts_matrix_b(t, eop):
 
 
 @njit
-def itrs2azel(observer,targets):
+def itrs2azel(observer, targets):
     """
     Purpose:
         Calculate the observed locations of a set of ITRS target coordinates with respect to an observer coordinate
@@ -224,21 +209,23 @@ def itrs2azel(observer,targets):
     x = observer[0]
     y = observer[1]
     z = observer[2]
-    dx = targets[:,0] - x
-    dy = targets[:,1] - y
-    dz = targets[:,2] - z
-    cos_azimuth = (-z*x*dx - z*y*dy + (x**2+y**2)*dz) / np.sqrt((x**2+y**2)*(x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
-    sin_azimuth = (-y*dx + x*dy) / np.sqrt((x**2+y**2)*(dx**2+dy**2+dz**2))
+    dx = targets[:, 0] - x
+    dy = targets[:, 1] - y
+    dz = targets[:, 2] - z
+    cos_azimuth = (-z * x * dx - z * y * dy + (x ** 2 + y ** 2) * dz) / np.sqrt(
+        (x ** 2 + y ** 2) * (x ** 2 + y ** 2 + z ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
+    sin_azimuth = (-y * dx + x * dy) / np.sqrt((x ** 2 + y ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
     az = np.arctan2(sin_azimuth, cos_azimuth)
-    cos_elevation = (x*dx + y*dy + z*dz) / np.sqrt((x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
+    cos_elevation = (x * dx + y * dy + z * dz) / np.sqrt((x ** 2 + y ** 2 + z ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
     el = np.pi / 2 - np.arccos(cos_elevation)
-    sr = np.sqrt(np.sum(np.power((observer-targets),2).T,axis=0)) # slant range
-    az = az + (az<0)*np.pi*2
+    sr = np.sqrt(np.sum(np.power((observer - targets), 2).T, axis=0))  # slant range
+    az = az + (az < 0) * np.pi * 2
     aer = np.column_stack((az, el, sr))
     return aer
 
 
-def _itrs2azel(observer,targets):
+@njit
+def _itrs2azel(observer, target):
     """
     Purpose:
         Calculate the observed location(s) of a set of ITRS target coordinate(s) with respect to an observer coordinate
@@ -251,28 +238,20 @@ def _itrs2azel(observer,targets):
         aer is a numpy array of dimension [3] or [n,3], where 3 is the azimuth (radians), elevation (radians), slant
             range (meters) of the target points from the perspective of the observer point
     """
-    targets_t = targets.T
     x = observer[0]
     y = observer[1]
     z = observer[2]
-    dx = targets_t[0] - x
-    dy = targets_t[1] - y
-    dz = targets_t[2] - z
-    cos_azimuth = (-z*x*dx - z*y*dy + (x**2+y**2)*dz) / np.sqrt((x**2+y**2)*(x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
-    sin_azimuth = (-y*dx + x*dy) / np.sqrt((x**2+y**2)*(dx**2+dy**2+dz**2))
-    az = np.asarray(np.arctan2(sin_azimuth, cos_azimuth))
-    cos_elevation = (x*dx + y*dy + z*dz) / np.sqrt((x**2+y**2+z**2)*(dx**2+dy**2+dz**2))
+    dx = target[0] - x
+    dy = target[1] - y
+    dz = target[2] - z
+    cos_azimuth = (-z * x * dx - z * y * dy + (x ** 2 + y ** 2) * dz) / np.sqrt(
+        (x ** 2 + y ** 2) * (x ** 2 + y ** 2 + z ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
+    sin_azimuth = (-y * dx + x * dy) / np.sqrt((x ** 2 + y ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
+    az = np.arctan2(sin_azimuth, cos_azimuth)
+    cos_elevation = (x * dx + y * dy + z * dz) / np.sqrt((x ** 2 + y ** 2 + z ** 2) * (dx ** 2 + dy ** 2 + dz ** 2))
     el = np.pi / 2 - np.arccos(cos_elevation)
-    sr = np.sqrt(np.sum(np.power((observer-targets),2).T,axis=0)) # slant range
-    n = int(az.size)
-    for i in range(n):
-        if n > 1:
-            if az[i] < 0:
-                az[i] = az[i] + np.pi*2
-        else:
-            if az < 0:
-                az = az + np.pi*2
-    aer = np.stack((az, el, sr),axis=0).T
+    sr = np.sqrt(np.sum(np.power((observer - target), 2).T, axis=0))  # slant range
+    aer = np.array([az, el, sr])
     return aer
 
 
@@ -481,7 +460,7 @@ def itrs2lla(xyz):
         lla is a numpy array of dimension [3] or [n,3], where 3 is the lon (radians),lat (radians), height (meters) of
             the geodetic coordinates of n different sets of coordinates
     """
-    lla = np.array(gc2gd(1,xyz),dtype=np.float64)
+    lla = np.array(gc2gd(1, xyz), dtype=np.float64)
     lla = lla.T
     return lla
 
@@ -497,7 +476,7 @@ def lla2itrs(lla):
             meters of n different sets of coordinates
     """
     lla = np.atleast_2d(lla)
-    xyz = np.array(gd2gc(1,lla[:,0],lla[:,1],lla[:,2]),dtype=np.float64)
+    xyz = np.array(gd2gc(1, lla[:, 0], lla[:, 1], lla[:, 2]), dtype=np.float64)
     if xyz.size == 3:
         xyz = xyz[0]
     return xyz
