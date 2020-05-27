@@ -3,14 +3,18 @@ from astropy import units as u
 import numpy as np
 from datetime import datetime, timedelta
 import time
+
+from numpy.core._multiarray_umath import ndarray
 from scipy.spatial import distance
 from scipy.linalg import det
+
+print("Running Test Cases...")
 
 # !------------ Test 1 - GCRS to ITRS
 from transformations import gcrs2irts_matrix_a, get_eops, gcrs2irts_matrix_b
 eop = get_eops()
 
-xyz1 = np.array([1285410, -4797210, 3994830], dtype=np.float64)
+xyz1: ndarray = np.array([1285410, -4797210, 3994830], dtype=np.float64)
 
 t=datetime(year = 2007, month = 4, day = 5, hour = 12, minute = 0, second = 0)
 object = SkyCoord(x=xyz1[0] * u.m, y=xyz1[1] * u.m, z=xyz1[2] * u.m, frame='gcrs',
@@ -23,7 +27,7 @@ test1b_error = distance.euclidean(itrs.cartesian.xyz._to_value(u.m),
                                   gcrs2irts_matrix_b(t, eop) @ xyz1)
 assert test1a_error < 25, print("Failed Test 1: GCRS to ITRS transformation")
 print("Test 1a: GCRS to ITRS (a) error in meters: ", test1a_error)
-print("Test 1b: GCRS to ITRS (b) error in meters: ", test1b_error)
+print("Test 1b: GCRS to ITRS (b) error in kilometers: ", test1b_error)
 
 # !------------ Test 2a - ITRS to LLA
 from transformations import itrs2lla
@@ -122,3 +126,53 @@ print("Test 5c: Cel2Ter06aXY vs Cel2Ter00aEB, magnitude of error: ", det(Cel2Ter
 print("Test 5d: Cel2Ter06aXY vs Cel2Ter06aCA, magnitude of error: ", det(Cel2Ter06aXY - Cel2Ter06aCA))
 print("Test 5e: Cel2Ter06aXY vs gcrs2irts_matrix, magnitude of error: ", det(Cel2Ter06aXY - gcrs2irts_matrix_a(t, eop)))
 print("Test 5f: Cel2Ter06aXY vs utc2cel06acio, magnitude of error: ", det(Cel2Ter06aXY - gcrs2irts_matrix_b(t, eop)))
+
+# !------------ Test 6 - Az El end to end
+from envs.transformations import lla2itrs, _itrs2azel
+
+observer_lat = np.radians(38.828198)
+observer_lon = np.radians(-77.305352)
+observer_alt = np.float64(20.0) # in meters
+observer_lla = np.array((observer_lon, observer_lat, observer_alt))
+observer_itrs = lla2itrs(observer_lla)/1000 # meter -> kilometers
+
+@njit
+def hx(x_gcrs, trans_matrix, obs=observer_itrs):
+    # measurement function - convert state into a measurement
+    # where measurements are [azimuth, elevation]
+    x_itrs = trans_matrix @ x_gcrs[:3]
+    aer = _itrs2azel(observer_itrs, x_itrs)
+    return aer
+
+def hx2(x, t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_alt):
+    # measurement function - convert state into a measurement
+    # where measurements are [azimuth, elevation]
+    object = SkyCoord(x=x[0] * u.km, y=x[1] * u.km, z=x[2] * u.km, frame='gcrs',
+                   representation_type='cartesian', obstime=t)
+    obs = EarthLocation.from_geodetic(lon=obs_lon*u.rad, lat=obs_lat*u.rad, height=obs_height*u.m)
+    AltAz_frame = AltAz(obstime=t, location=obs)
+    results = object.transform_to(AltAz_frame)
+
+    az = results.az.to_value(u.rad)
+    alt = results.alt.to_value(u.rad)
+    sr = results.distance.to_value(u.km)
+    aer = np.array([az, alt, sr])
+    return aer
+
+t=datetime(year = 2007, month = 4, day = 5, hour = 12, minute = 0, second = 0)
+
+trans_matrix = gcrs2irts_matrix_a(t, eop)
+
+ini = _itrs2azel(observer_itrs, x[:3]) # since _itrs2azel is used inside hx, it must be compiled prior to hx
+
+z1 = hx(x, trans_matrix, obs=observer_itrs)
+
+z2 = hx2(x, t, obs_lat=observer_lat, obs_lon=observer_lon, obs_height=observer_alt)
+
+hx_error = z2 - z1
+
+print("Test 6a: hx error in azimuth (arc seconds) = ", np.degrees(hx_error[0])*60*60)
+print("Test 6b: hx error in elevation (arc seconds) = ", np.degrees(hx_error[1])*60*60)
+print("Test 6c: hx error in slant range (meters) = ", np.degrees(hx_error[2])*1000)
+print("I am unsure if these errors are mine or AstroPy's given the above matched. Each sub-function checks out against AstroPy, but the end to end case has significantly more error...")
+print("Done")
